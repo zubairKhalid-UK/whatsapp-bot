@@ -3,24 +3,31 @@ const { Client, LocalAuth } = require("whatsapp-web.js");
 
 // ================= EXPRESS SERVER =================
 const app = express();
-const PORT = process.env.PORT || 3000;
 
-let latestQR = ""; // store latest QR
+// ✅ IMPORTANT: use ONLY Hostinger port
+const PORT = process.env.PORT;
+
+if (!PORT) {
+  console.error("❌ PORT not assigned by hosting");
+  process.exit(1);
+}
+
+let latestQR = "";
 
 // Home route
 app.get("/", (req, res) => {
   res.send("✅ WhatsApp bot is running! Go to /qr to scan.");
 });
 
-// QR route (shows QR in browser)
+// QR route
 app.get("/qr", (req, res) => {
   if (!latestQR) {
-    return res.send("⏳ QR not generated yet. Please refresh...");
+    return res.send("⏳ QR not ready yet. Refresh in a few seconds...");
   }
 
   res.send(`
     <h2>Scan QR Code</h2>
-    <p>Open WhatsApp → Linked Devices → Link a device</p>
+    <p>WhatsApp → Linked Devices → Link a Device</p>
     <img src="https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${latestQR}" />
   `);
 });
@@ -35,20 +42,25 @@ const client = new Client({
   authStrategy: new LocalAuth(),
   puppeteer: {
     headless: true,
-    args: ["--no-sandbox", "--disable-setuid-sandbox"],
+    args: [
+      "--no-sandbox",
+      "--disable-setuid-sandbox",
+      "--disable-dev-shm-usage",
+      "--disable-gpu",
+    ],
   },
 });
 
-// Capture QR and store it
+// QR event
 client.on("qr", (qr) => {
-  console.log("📱 QR received, open /qr in browser");
+  console.log("📱 QR received → open /qr");
   latestQR = qr;
 });
 
-// Bot ready
+// Ready event
 client.on("ready", () => {
   console.log("✅ Bot is ready!");
-  latestQR = ""; // clear QR after login
+  latestQR = "";
 });
 
 // Keywords
@@ -59,17 +71,15 @@ const KEYWORDS = [
   "shift available wembly stadium",
 ];
 
-// Listen for messages
+// Message listener
 client.on("message", async (msg) => {
   try {
     const chat = await msg.getChat();
 
     console.log("📩 From:", chat.name, "| Message:", msg.body);
 
-    // Only groups
     if (!chat.isGroup) return;
 
-    // Target specific group
     if (!chat.name.includes("Wembley, MK Dons,Reading, Northampton 🏟️")) return;
 
     const text = msg.body.toLowerCase();
