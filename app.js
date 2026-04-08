@@ -1,43 +1,45 @@
 const express = require("express");
 const { Client, LocalAuth } = require("whatsapp-web.js");
 
-// ================= EXPRESS SERVER =================
 const app = express();
 
-// ✅ IMPORTANT: use ONLY Hostinger port
+// ✅ Must use Hostinger-assigned port
 const PORT = process.env.PORT;
-
 if (!PORT) {
   console.error("❌ PORT not assigned by hosting");
   process.exit(1);
 }
 
+// Store QR code for browser display
 let latestQR = "";
 
-// Home route
+// -------------------- Website Routes --------------------
+
+// Home page
 app.get("/", (req, res) => {
-  res.send("✅ WhatsApp bot is running! Go to /qr to scan.");
+  res.send(
+    "<h1>✅ Node Website + WhatsApp Bot Running!</h1><p>Go to <a href='/qr'>/qr</a> to scan WhatsApp QR code.</p>",
+  );
 });
 
-// QR route
+// QR code page
 app.get("/qr", (req, res) => {
-  if (!latestQR) {
+  if (!latestQR)
     return res.send("⏳ QR not ready yet. Refresh in a few seconds...");
-  }
 
   res.send(`
     <h2>Scan QR Code</h2>
-    <p>WhatsApp → Linked Devices → Link a Device</p>
+    <p>Open WhatsApp → Linked Devices → Link a Device</p>
     <img src="https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${latestQR}" />
   `);
 });
 
-// Start server
+// -------------------- Start Express Server --------------------
 app.listen(PORT, () => {
   console.log(`🌐 Server running on port ${PORT}`);
 });
 
-// ================= WHATSAPP BOT =================
+// -------------------- WhatsApp Bot --------------------
 const client = new Client({
   authStrategy: new LocalAuth(),
   puppeteer: {
@@ -51,19 +53,19 @@ const client = new Client({
   },
 });
 
-// QR event
+// Capture QR code
 client.on("qr", (qr) => {
-  console.log("📱 QR received → open /qr");
+  console.log("📱 QR received → open /qr in browser");
   latestQR = qr;
 });
 
-// Ready event
+// Bot ready
 client.on("ready", () => {
-  console.log("✅ Bot is ready!");
-  latestQR = "";
+  console.log("✅ WhatsApp bot is ready!");
+  latestQR = ""; // QR no longer needed after login
 });
 
-// Keywords
+// Keywords to watch
 const KEYWORDS = [
   "wembly",
   "wembley",
@@ -71,15 +73,16 @@ const KEYWORDS = [
   "shift available wembly stadium",
 ];
 
-// Message listener
+// Listen for messages
 client.on("message", async (msg) => {
   try {
     const chat = await msg.getChat();
-
     console.log("📩 From:", chat.name, "| Message:", msg.body);
 
+    // Only groups
     if (!chat.isGroup) return;
 
+    // Target specific group
     if (!chat.name.includes("Wembley, MK Dons,Reading, Northampton 🏟️")) return;
 
     const text = msg.body.toLowerCase();
@@ -87,19 +90,16 @@ client.on("message", async (msg) => {
 
     if (matched) {
       console.log("✅ Keyword matched → reacting 👍");
-
       await new Promise((resolve) => setTimeout(resolve, 2000));
-
       await msg.react("👍");
 
-      if (msg.author) {
-        await client.sendMessage(msg.author, "available");
-      }
+      // Reply privately
+      if (msg.author) await client.sendMessage(msg.author, "available");
     }
   } catch (error) {
     console.error("❌ Error:", error);
   }
 });
 
-// Start bot
+// Start WhatsApp bot
 client.initialize();
