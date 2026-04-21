@@ -1,45 +1,57 @@
 const express = require("express");
 const { Client, LocalAuth } = require("whatsapp-web.js");
+const QRCode = require("qrcode");
 
 const app = express();
 
-// ✅ Must use Hostinger-assigned port
-const PORT = process.env.PORT;
-if (!PORT) {
-  console.error("❌ PORT not assigned by hosting");
-  process.exit(1);
-}
+// ✅ Use fallback port
+const PORT = process.env.PORT || 3000;
 
-// Store QR code for browser display
+// Store latest QR
 let latestQR = "";
 
 // -------------------- Website Routes --------------------
 
 // Home page
 app.get("/", (req, res) => {
-  res.send(
-    "<h1>✅ Node Website + WhatsApp Bot Running!</h1><p>Go to <a href='/qr'>/qr</a> to scan WhatsApp QR code.</p>",
-  );
-});
-
-// QR code page
-app.get("/qr", (req, res) => {
-  if (!latestQR)
-    return res.send("⏳ QR not ready yet. Refresh in a few seconds...");
-
   res.send(`
-    <h2>Scan QR Code</h2>
-    <p>Open WhatsApp → Linked Devices → Link a Device</p>
-    <img src="https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${latestQR}" />
+    <h1>✅ Node Website + WhatsApp Bot Running!</h1>
+    <p>Go to <a href="/qr">/qr</a> to scan WhatsApp QR code.</p>
   `);
 });
 
-// -------------------- Start Express Server --------------------
+// QR page
+app.get("/qr", async (req, res) => {
+  if (!latestQR) {
+    return res.send(`
+      <h2>⏳ QR not ready yet</h2>
+      <p>Refresh in a few seconds...</p>
+      <meta http-equiv="refresh" content="5">
+    `);
+  }
+
+  try {
+    const qrImage = await QRCode.toDataURL(latestQR);
+
+    res.send(`
+      <h2>📱 Scan QR Code</h2>
+      <p>Open WhatsApp → Linked Devices → Link a Device</p>
+      <img src="${qrImage}" />
+      <p>QR refreshes every 10 seconds</p>
+      <meta http-equiv="refresh" content="10">
+    `);
+  } catch (err) {
+    res.send("❌ Failed to generate QR");
+  }
+});
+
+// Start server
 app.listen(PORT, () => {
   console.log(`🌐 Server running on port ${PORT}`);
 });
 
 // -------------------- WhatsApp Bot --------------------
+
 const client = new Client({
   authStrategy: new LocalAuth(),
   puppeteer: {
@@ -53,19 +65,24 @@ const client = new Client({
   },
 });
 
-// Capture QR code
+// QR event
 client.on("qr", (qr) => {
-  console.log("📱 QR received → open /qr in browser");
+  console.log("📱 QR received → open /qr");
   latestQR = qr;
 });
 
-// Bot ready
+// Ready event
 client.on("ready", () => {
   console.log("✅ WhatsApp bot is ready!");
-  latestQR = ""; // QR no longer needed after login
+  latestQR = ""; // clear QR after login
 });
 
-// Keywords to watch
+// Optional: debug QR string
+client.on("qr", (qr) => {
+  console.log("RAW QR:", qr.substring(0, 50) + "...");
+});
+
+// Keywords
 const KEYWORDS = [
   "wembly",
   "wembley",
@@ -90,16 +107,20 @@ client.on("message", async (msg) => {
 
     if (matched) {
       console.log("✅ Keyword matched → reacting 👍");
+
       await new Promise((resolve) => setTimeout(resolve, 2000));
+
       await msg.react("👍");
 
       // Reply privately
-      if (msg.author) await client.sendMessage(msg.author, "available");
+      if (msg.author) {
+        await client.sendMessage(msg.author, "available");
+      }
     }
   } catch (error) {
     console.error("❌ Error:", error);
   }
 });
 
-// Start WhatsApp bot
+// Start bot
 client.initialize();
