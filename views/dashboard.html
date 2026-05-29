@@ -1,0 +1,49 @@
+<!doctype html>
+<html>
+  <head>
+    <title>Dashboard</title>
+    <link rel="stylesheet" href="/public/style.css" />
+  </head>
+  <body>
+    <div class="container">
+      <h1>🤖 WhatsApp Bot Dashboard</h1>
+
+      <p id="status">Checking status...</p>
+
+      <div id="qr-box">
+        <h3>📱 Scan QR</h3>
+        <img id="qr" />
+      </div>
+
+      <br />
+
+      <a href="/logout">Logout</a>
+    </div>
+
+    <script>
+      async function loadStatus() {
+        const res = await fetch("/api/status");
+        const data = await res.json();
+
+        document.getElementById("status").innerText = data.ready
+          ? "🟢 Bot Connected"
+          : "🟡 Waiting for QR";
+
+        if (!data.ready) {
+          const qrRes = await fetch("/api/qr");
+          const qrData = await qrRes.json();
+
+          if (qrData.qr) {
+            document.getElementById("qr").src = qrData.qr; // now works
+          }
+        } else {
+          document.getElementById("qr-box").innerHTML =
+            "<h2>✅ Bot is Ready</h2>";
+        }
+      }
+
+      setInterval(loadStatus, 3000);
+      loadStatus();
+    </script>
+  </body>
+</html>

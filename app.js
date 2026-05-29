@@ -1,154 +1,109 @@
+require("dotenv").config();
 const express = require("express");
-const { Client, LocalAuth } = require("whatsapp-web.js");
+const session = require("express-session");
+const path = require("path");
 const QRCode = require("qrcode");
+
+const { getQR, isReady } = require("./bot");
 
 const app = express();
 
-// ✅ Use fallback port
-const PORT = process.env.PORT || 3000;
+// ---------------- MIDDLEWARE ----------------
 
-// Store latest QR
-let latestQR = "";
-let isBotReady = false; // 👈 ADD THIS LINE
+app.use(express.urlencoded({ extended: true }));
+app.use(express.json());
 
-// -------------------- Website Routes --------------------
+// Session config (safer defaults)
+app.use(
+  session({
+    secret: process.env.SESSION_SECRET,
+    resave: false,
+    saveUninitialized: false,
+    cookie: {
+      httpOnly: true,
+      sameSite: "lax",
+    },
+  }),
+);
 
-// Home page
-app.get("/", (req, res) => {
-  res.send(`
-    <h1>✅ Node Website + WhatsApp Bot Running!</h1>
-    <p>Go to <a href="/qr">/qr</a> to scan WhatsApp QR code.</p>
-  `);
-});
+// Static files
+app.use("/public", express.static(path.join(__dirname, "public")));
 
-// QR page
-app.get("/qr", async (req, res) => {
-  // If already logged in, show success and stop refreshing!
-  if (isBotReady) {
-    return res.send(`
-      <div style="text-align: center; font-family: sans-serif; margin-top: 50px;">
-        <h1 style="color: #25D366;">🟢 Bot is Connected & Active!</h1>
-        <p>Your WhatsApp automation is running 24/7 on your AlmaLinux VPS.</p>
-        <p>Monitoring Group: <b>Wembley, MK Dons, Reading, Northampton 🏟️</b></p>
-      </div>
-    `);
-  }
+// ---------------- AUTH MIDDLEWARE ----------------
 
-  if (!latestQR) {
-    return res.send(`
-      <h2>⏳ QR not ready yet</h2>
-      <p>Refresh in a few seconds...</p>
-      <meta http-equiv="refresh" content="5">
-    `);
-  }
-
-  try {
-    const qrImage = await QRCode.toDataURL(latestQR);
-
-    res.send(`
-      <h2>📱 Scan QR Code</h2>
-      <p>Open WhatsApp → Linked Devices → Link a Device</p>
-      <img src="${qrImage}" />
-      <p>QR refreshes every 10 seconds</p>
-      <meta http-equiv="refresh" content="10">
-    `);
-  } catch (err) {
-    res.send("❌ Failed to generate QR");
-  }
-});
-
-// Start server
-app.listen(PORT, () => {
-  console.log(`🌐 Server running on port ${PORT}`);
-});
-
-// -------------------- WhatsApp Bot --------------------
-
-const client = new Client({
-  authStrategy: new LocalAuth(),
-  puppeteer: {
-    headless: true,
-    defaultViewport: null,
-    protocolTimeout: 60000, // 60s timeout for slow connections
-    args: [
-      "--no-sandbox",
-      "--disable-setuid-sandbox",
-      "--disable-dev-shm-usage",
-      "--disable-gpu",
-    ],
-  },
-});
-
-// QR event
-client.on("qr", (qr) => {
-  console.log("📱 QR received → open /qr");
-  latestQR = qr;
-});
-
-// Ready event
-client.on("ready", () => {
-  console.log("✅ WhatsApp bot is ready!");
-  latestQR = ""; // clear QR after login
-  isBotReady = true; // 👈 SET READY FLAG
-});
-
-// If the bot gets disconnected later, reset the flag
-client.on("disconnected", () => {
-  console.log("❌ Bot disconnected");
-  isBotReady = false;
-});
-
-// Optional: debug QR string
-client.on("qr", (qr) => {
-  console.log("RAW QR:", qr.substring(0, 50) + "...");
-});
-
-// Keywords
-const KEYWORDS = [
-  "wembly",
-  "wembley",
-  "shift available wembley stadium",
-  "shift available wembly stadium",
-];
-
-const TARGET_GROUPS = ["Wembley, MK Dons,Reading, Northampton 🏟️"];
-
-// Listen for messages
-client.on("message", async (msg) => {
-  try {
-    const chat = await msg.getChat();
-    // Only groups
-    if (!chat.isGroup) return;
-    // Only target groups
-    if (!TARGET_GROUPS.some((name) => chat.name.includes(name))) return;
-
-    // console.log("📩 From:", chat.name, "| Message:", msg.body);
-
-    // Target specific group
-    // if (!chat.name.includes("Wembley, MK Dons,Reading, Northampton 🏟️")) return;
-
-    const text = msg.body.toLowerCase();
-    const matched = KEYWORDS.some((word) => text.includes(word));
-
-    if (matched) {
-      console.log("✅ Keyword matched → reacting 👍");
-
-      await new Promise((resolve) => setTimeout(resolve, 1370)); // 1.37s delay for natural reaction
-
-      await msg.react("👍");
-
-      // Reply privately
-      if (msg.author) {
-        await msg.reply("available", msg.author);
-
-        // await client.sendMessage(msg.author, "available");
-        // quotedMessageId: msg.id._serialized; // 👈 This explicitly quotes the group text in the private chat
-      }
+function requireLogin(req, res, next) {
+  if (!req.session.loggedIn) {
+    // IMPORTANT: return JSON for API routes instead of redirecting
+    if (req.path.startsWith("/api")) {
+      return res.status(401).json({ error: "Not authenticated" });
     }
-  } catch (error) {
-    console.error("❌ Error:", error);
+    return res.redirect("/login");
+  }
+  next();
+}
+
+// ---------------- LOGIN ----------------
+
+app.get("/login", (req, res) => {
+  res.sendFile(path.join(__dirname, "views/login.html"));
+});
+
+app.post("/login", (req, res) => {
+  const { username, password } = req.body;
+
+  if (
+    username === process.env.ADMIN_USER &&
+    password === process.env.ADMIN_PASS
+  ) {
+    req.session.loggedIn = true;
+    return res.redirect("/dashboard");
+  }
+
+  return res.status(401).send("❌ Invalid login");
+});
+
+// ---------------- DASHBOARD ----------------
+
+app.get("/dashboard", requireLogin, (req, res) => {
+  res.sendFile(path.join(__dirname, "views/dashboard.html"));
+});
+
+// ---------------- API ----------------
+
+// Bot status
+app.get("/api/status", requireLogin, (req, res) => {
+  res.json({
+    ready: isReady(),
+  });
+});
+
+// QR code
+app.get("/api/qr", requireLogin, async (req, res) => {
+  try {
+    const qr = getQR();
+
+    if (!qr) {
+      return res.json({ qr: null });
+    }
+
+    const qrImageData = await QRCode.toDataURL(qr);
+    return res.json({ qr: qrImageData });
+  } catch (err) {
+    console.error("QR error:", err);
+    return res.status(500).json({ qr: null, error: "Failed to generate QR" });
   }
 });
 
-// Start bot
-client.initialize();
+// ---------------- LOGOUT ----------------
+
+app.get("/logout", (req, res) => {
+  req.session.destroy(() => {
+    res.redirect("/login");
+  });
+});
+
+// ---------------- START SERVER ----------------
+
+app.listen(process.env.PORT, () => {
+  console.log("🌐 Server running on port", process.env.PORT);
+});
